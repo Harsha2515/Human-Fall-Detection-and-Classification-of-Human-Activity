@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Human Activity Dashboard (Real-time)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; }
+    h2, h3, h4 { color: #1c1e21; text-align: center; }
+    .dashboard-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 25px; padding: 0 10px; }
+    #status { font-size: 18px; font-weight: bold; padding: 8px 15px; border-radius: 8px; color: white; transition: background-color 0.5s; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .activity-box {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px 30px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      margin-bottom: 30px;
+    }
+    .activity-box h3 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      opacity: 0.8;
+      color: white;
+    }
+    #activity-label {
+      margin: 0;
+      font-size: 48px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    }
+    .chart-grid { display: flex; flex-direction: column; gap: 30px; }
+    .chart-row { display: flex; flex-direction: row; gap: 20px; }
+    .chart-container { background-color: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); flex: 1; min-width: 0; }
+    canvas { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="dashboard-header">
+    <h2>📡 Human Activity Dashboard</h2>
+    <p>Device Status: <span id="status" style="background-color: grey;">Connecting...</span></p>
+  </div>
+  
+  <!-- Activity Prediction Box -->
+  <div class="activity-box">
+    <h3>CURRENT ACTIVITY</h3>
+    <p id="activity-label">--</p>
+  </div>
+
+  <div class="chart-grid">
+    <div>
+      <h3>Raw Sensor Data</h3>
+      <div class="chart-row">
+        <div class="chart-container"><h4>Accelerometer</h4><canvas id="accChart"></canvas></div>
+        <div class="chart-container"><h4>Gyroscope</h4><canvas id="gyroChart"></canvas></div>
+      </div>
+    </div>
+    <div>
+      <h3>Filtered Sensor Data</h3>
+      <div class="chart-row">
+        <div class="chart-container"><h4>Filtered Accelerometer</h4><canvas id="filteredAccChart"></canvas></div>
+        <div class="chart-container"><h4>Filtered Gyroscope</h4><canvas id="filteredGyroChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const activityLabelEl = document.getElementById("activity-label");
+    const accCtx = document.getElementById("accChart").getContext("2d");
+    const gyroCtx = document.getElementById("gyroChart").getContext("2d");
+    const filteredAccCtx = document.getElementById("filteredAccChart").getContext("2d");
+    const filteredGyroCtx = document.getElementById("filteredGyroChart").getContext("2d");
+
+    const chartOptions = {
+        animation: false,
+        scales: { x: { type: 'linear', title: { display: true, text: 'Sample Number' }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 20 } } },
+        plugins: { legend: { display: true } }
+    };
+    
+    const accChart = new Chart(accCtx, { type: "line", data: { labels: [], datasets: [ { label: "AccX", data: [], borderColor: "rgba(255, 99, 132, 0.5)", borderWidth: 1.5, pointRadius: 0 }, { label: "AccY", data: [], borderColor: "rgba(75, 192, 192, 0.5)", borderWidth: 1.5, pointRadius: 0 }, { label: "AccZ", data: [], borderColor: "rgba(54, 162, 235, 0.5)", borderWidth: 1.5, pointRadius: 0 } ] }, options: chartOptions });
+    const gyroChart = new Chart(gyroCtx, { type: "line", data: { labels: [], datasets: [ { label: "GyroX", data: [], borderColor: "rgba(255, 159, 64, 0.5)", borderWidth: 1.5, pointRadius: 0 }, { label: "GyroY", data: [], borderColor: "rgba(153, 102, 255, 0.5)", borderWidth: 1.5, pointRadius: 0 }, { label: "GyroZ", data: [], borderColor: "rgba(201, 203, 207, 0.5)", borderWidth: 1.5, pointRadius: 0 } ] }, options: chartOptions });
+    const filteredAccChart = new Chart(filteredAccCtx, { type: "line", data: { labels: [], datasets: [ { label: "Filtered AccX", data: [], borderColor: "rgba(255, 99, 132, 1)", borderWidth: 2, pointRadius: 0 }, { label: "Filtered AccY", data: [], borderColor: "rgba(75, 192, 192, 1)", borderWidth: 2, pointRadius: 0 }, { label: "Filtered AccZ", data: [], borderColor: "rgba(54, 162, 235, 1)", borderWidth: 2, pointRadius: 0 } ] }, options: chartOptions });
+    const filteredGyroChart = new Chart(filteredGyroCtx, { type: "line", data: { labels: [], datasets: [ { label: "Filtered GyroX", data: [], borderColor: "rgba(255, 159, 64, 1)", borderWidth: 2, pointRadius: 0 }, { label: "Filtered GyroY", data: [], borderColor: "rgba(153, 102, 255, 1)", borderWidth: 2, pointRadius: 0 }, { label: "Filtered GyroZ", data: [], borderColor: "rgba(201, 203, 207, 1)", borderWidth: 2, pointRadius: 0 } ] }, options: chartOptions });
+
+    const MAX_DATA_POINTS = 500;
+    let statusTimeout;
+    let sampleCount = 0;
+    let lastActivity = "";
+
+    function addDataToCharts(data, shouldUpdate = true) {
+        sampleCount++;
+        
+        const raw = data.raw;
+        const filtered = data.filtered;
+
+        // 1. Add RAW data
+        accChart.data.labels.push(sampleCount);
+        accChart.data.datasets.forEach((d, i) => d.data.push(raw.acc[['x','y','z'][i]]));
+        gyroChart.data.labels.push(sampleCount);
+        gyroChart.data.datasets.forEach((d, i) => d.data.push(raw.gyro[['x','y','z'][i]]));
+        
+        // 2. Add FILTERED data
+        filteredAccChart.data.labels.push(sampleCount);
+        filteredAccChart.data.datasets.forEach((d, i) => d.data.push(filtered.acc[['x','y','z'][i]]));
+        filteredGyroChart.data.labels.push(sampleCount);
+        filteredGyroChart.data.datasets.forEach((d, i) => d.data.push(filtered.gyro[['x','y','z'][i]]));
+
+        // 3. Manage chart length
+        const allCharts = [accChart, gyroChart, filteredAccChart, filteredGyroChart];
+        allCharts.forEach(chart => {
+            if (chart.data.labels.length > MAX_DATA_POINTS) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(d => d.data.shift());
+            }
+        });
+        
+        if (shouldUpdate) allCharts.forEach(chart => chart.update());
+    }
+    
+    async function initialLoad() {
+        try {
+            const historyResp = await fetch("http://127.0.0.1:5000/history");
+            const data = await historyResp.json();
+            if (data.history && data.history.length > 0) {
+                data.history.forEach(point => addDataToCharts(point, false));
+                [accChart, gyroChart, filteredAccChart, filteredGyroChart].forEach(chart => chart.update());
+            }
+        } catch (error) { console.error("Failed to load history:", error); }
+    }
+    
+    function connectToStream() {
+        const eventSource = new EventSource("http://127.0.0.1:5000/stream");
+        eventSource.onopen = () => console.log("Real-time connection established.");
+
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            // Update status indicator
+            statusEl.textContent = "Active";
+            statusEl.style.backgroundColor = "green";
+            clearTimeout(statusTimeout);
+            statusTimeout = setTimeout(() => {
+                statusEl.textContent = "Inactive";
+                statusEl.style.backgroundColor = "red";
+            }, 3000);
+
+            // Update charts with raw and filtered data
+            addDataToCharts(data);
+
+            // Update the activity label
+            if (data.prediction && data.prediction !== lastActivity) {
+                lastActivity = data.prediction;
+                activityLabelEl.style.transform = 'scale(0.9)';
+                activityLabelEl.style.opacity = '0.5';
+                setTimeout(() => {
+                    activityLabelEl.textContent = lastActivity;
+                    activityLabelEl.style.transform = 'scale(1)';
+                    activityLabelEl.style.opacity = '1';
+                }, 150);
+            }
+        };
+
+        eventSource.onerror = function(err) {
+            console.error("EventSource failed:", err);
+            statusEl.textContent = "Error";
+            statusEl.style.backgroundColor = "darkred";
+            eventSource.close();
+            setTimeout(connectToStream, 5000);
+        };
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        initialLoad(); 
+        connectToStream();
+    });
+  </script>
+</body>
+</html>
